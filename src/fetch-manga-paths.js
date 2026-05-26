@@ -27,8 +27,28 @@ const baseUrl = new URL(baseInput.endsWith('/') ? baseInput : `${baseInput}/`);
 const siteRoot = new URL('/', baseUrl);
 const outDir = resolve(process.cwd(), 'output');
 
-const seenUrls = new Map();
-const visitedPages = new Set();
+const seenMangaUrls = new Map();
+const seenFinalUrls = new Map();
+const visitedArchivePages = new Set();
+const visitedMangaPages = new Set();
+
+const BLOCKED_MANGA_SLUGS = new Set([
+  'page',
+  'feed',
+  'genre',
+  'manga-genre',
+  'tag',
+  'author',
+  'artist',
+  'release',
+  'wp-json',
+]);
+
+const BLOCKED_FINAL_SLUGS = new Set([
+  'feed',
+  'comments',
+  'comment-page-1',
+]);
 
 function sleep(ms) {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
@@ -50,34 +70,107 @@ function isSameHost(url) {
   return url.hostname === baseUrl.hostname;
 }
 
-function isMangaDetailUrl(url) {
-  if (!isSameHost(url)) return false;
-  const basePath = baseUrl.pathname.replace(/\/+$/, '');
-  const path = url.pathname.replace(/\/+$/, '');
-  if (!path.startsWith(`${basePath}/`)) return false;
-
-  const rest = path.slice(basePath.length + 1);
-  if (!rest || rest.includes('/')) return false;
-
-  const blocked = new Set(['page', 'feed', 'genre', 'manga-genre', 'tag', 'author']);
-  return !blocked.has(rest.toLowerCase());
+function pathSegments(url) {
+  return url.pathname.split('/').filter(Boolean);
 }
 
-function remember(url, source) {
+function baseSegments() {
+  return baseUrl.pathname.split('/').filter(Boolean);
+}
+
+function startsWithBaseSegments(segments) {
+  const base = baseSegments();
+  if (segments.length < base.length) return false;
+  return base.every((segment, index) => segments[index] === segment);
+}
+
+function isMangaDetailUrl(url) {
+  if (!isSameHost(url)) return false;
+
+  const base = baseSegments();
+  const segments = pathSegments(url);
+  if (!startsWithBaseSegments(segments)) return false;
+  if (segments.length !== base.length + 1) return false;
+
+  const mangaSlug = segments[base.length];
+  return Boolean(mangaSlug) && !BLOCKED_MANGA_SLUGS.has(mangaSlug.toLowerCase());
+}
+
+function isFinalPathUrl(url) {
+  if (!isSameHost(url)) return false;
+
+  const base = baseSegments();
+  const segments = pathSegments(url);
+  if (!startsWithBaseSegments(segments)) return false;
+  if (segments.length !== base.length + 2) return false;
+
+  const mangaSlug = segments[base.length];
+  const finalSlug = segments[base.length + 1];
+
+  if (!mangaSlug || !finalSlug) return false;
+  if (BLOCKED_MANGA_SLUGS.has(mangaSlug.toLowerCase())) return false;
+  if (BLOCKED_FINAL_SLUGS.has(finalSlug.toLowerCase())) return false;
+
+  return true;
+}
+
+function parentMangaUrlForFinal(url) {
+  const base = baseSegments();
+  const segments = pathSegments(url);
+  const mangaSegments = segments.slice(0, base.length + 1);
+  const parent = new URL(`/${mangaSegments.join('/')}/`, siteRoot);
+  return parent;
+}
+
+function rememberManga(url, source) {
   const normalized = normalizeUrl(url);
   if (!normalized || !isMangaDetailUrl(normalized)) return;
+
+  const segments = pathSegments(normalized);
+  const mangaSlug = segments[baseSegments().length];
   const key = normalized.href;
-  if (!seenUrls.has(key)) {
-    seenUrls.set(key, {
+
+  if (!seenMangaUrls.has(key)) {
+    seenMangaUrls.set(key, {
       url: key,
       path: normalized.pathname,
-      slug: normalized.pathname.split('/').filter(Boolean).pop(),
+      slug: mangaSlug,
       source,
     });
   }
 }
 
-function extractLinks(html, pageUrl) {
+function rememberFinal(url, source) {
+  const normalized = normalizeUrl(url);
+  if (!normalized || !isFinalPathUrl(normalized)) return;
+
+  const segments = pathSegments(normalized);
+  const base = baseSegments();
+  const mangaSlug = segments[base.length];
+  const finalSlug = segments[base.length + 1];
+  const parent = parentMangaUrlForFinal(normalized);
+  const key = normalized.href;
+
+  rememberManga(parent.href, `parent-of-final:${source}`);
+
+  if (!seenFinalUrls.has(key)) {
+    seenFinalUrls.set(key, {
+      url: key,
+      path: normalized.pathname,
+      mangaPath: parent.pathname,
+      mangaSlug,
+      finalSlug,
+      source,
+    });
+  }
+}
+
+function rememberCandidate(url, source) {
+  rememberFinal(url, source);
+  rememberManga(url, source);
+}
+
+function extractLinks(html) {
   const links = [];
   const hrefPattern = /href\s*=\s*(["'])(.*?)\1/gi;
   let match;
@@ -86,8 +179,8 @@ function extractLinks(html, pageUrl) {
     if (normalized && isSameHost(normalized)) links.push(normalized.href);
   }
 
-  const canonicalPattern = /<loc>\s*([^<]+)\s*<\/loc>/gi;
-  while ((match = canonicalPattern.exec(html)) !== null) {
+  const locPattern = /<loc>\s*([^<]+)\s*<\/loc>/gi;
+  while ((match = locPattern.exec(html)) !== null) {
     const normalized = normalizeUrl(match[1]);
     if (normalized && isSameHost(normalized)) links.push(normalized.href);
   }
@@ -100,7 +193,7 @@ async function fetchText(url, accept = 'text/html,application/xhtml+xml,applicat
     const response = await fetch(url, {
       headers: {
         accept,
-        'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) manga-path-fetcher/1.0',
+        'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) manga-final-path-fetcher/1.1',
       },
       redirect: 'follow',
     });
@@ -141,7 +234,7 @@ async function crawlRestApi() {
 
       for (const row of rows) {
         if (row?.link) {
-          remember(row.link, `rest:${type}`);
+          rememberCandidate(row.link, `rest:${type}`);
           total += 1;
         }
       }
@@ -161,6 +254,7 @@ async function crawlSitemaps() {
     '/post-sitemap.xml',
     '/manga-sitemap.xml',
     '/wp-manga-sitemap.xml',
+    '/chapter-sitemap.xml',
   ].map((path) => new URL(path, siteRoot).href);
 
   const queue = [...candidates];
@@ -174,12 +268,12 @@ async function crawlSitemaps() {
     const result = await fetchText(next, 'application/xml,text/xml,*/*;q=0.8');
     if (!result.ok || !result.text) continue;
 
-    const links = extractLinks(result.text, next);
+    const links = extractLinks(result.text);
     for (const link of links) {
       const normalized = normalizeUrl(link);
       if (!normalized) continue;
       if (normalized.pathname.includes('sitemap')) queue.push(normalized.href);
-      remember(normalized.href, `sitemap:${new URL(next).pathname}`);
+      rememberCandidate(normalized.href, `sitemap:${new URL(next).pathname}`);
     }
 
     await sleep(DELAY_MS);
@@ -192,14 +286,14 @@ function archivePageUrl(pageNumber) {
 }
 
 async function crawlArchivePage(url) {
-  if (visitedPages.has(url)) return [];
-  visitedPages.add(url);
+  if (visitedArchivePages.has(url)) return [];
+  visitedArchivePages.add(url);
 
   const result = await fetchText(url);
   if (!result.ok || !result.text) return [];
 
-  const links = extractLinks(result.text, url);
-  for (const link of links) remember(link, `archive:${new URL(url).pathname}`);
+  const links = extractLinks(result.text);
+  for (const link of links) rememberCandidate(link, `archive:${new URL(url).pathname}`);
 
   return links.filter((link) => {
     const parsed = normalizeUrl(link);
@@ -219,7 +313,7 @@ async function crawlArchive() {
       const url = queue[currentIndex];
       const morePages = await crawlArchivePage(url);
       for (const page of morePages) {
-        if (!visitedPages.has(page) && queue.length < MAX_PAGES * 2) queue.push(page);
+        if (!visitedArchivePages.has(page) && queue.length < MAX_PAGES * 2) queue.push(page);
       }
       await sleep(DELAY_MS);
     }
@@ -228,30 +322,103 @@ async function crawlArchive() {
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));
 }
 
+async function crawlMangaPage(manga) {
+  if (visitedMangaPages.has(manga.url)) return;
+  visitedMangaPages.add(manga.url);
+
+  const result = await fetchText(manga.url);
+  if (!result.ok || !result.text) return;
+
+  const links = extractLinks(result.text);
+  for (const link of links) {
+    const normalized = normalizeUrl(link);
+    if (!normalized) continue;
+
+    if (normalized.pathname.startsWith(manga.path)) {
+      rememberFinal(normalized.href, `manga-page:${manga.path}`);
+    } else {
+      rememberCandidate(normalized.href, `manga-page:${manga.path}`);
+    }
+  }
+}
+
+async function crawlMangaPagesForFinalPaths() {
+  const mangaRows = [...seenMangaUrls.values()].sort((a, b) => a.path.localeCompare(b.path));
+  let cursor = 0;
+
+  async function worker() {
+    while (cursor < mangaRows.length) {
+      const currentIndex = cursor;
+      cursor += 1;
+      await crawlMangaPage(mangaRows[currentIndex]);
+      await sleep(DELAY_MS);
+    }
+  }
+
+  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+}
+
+function rowsByManga(mangaRows, finalRows) {
+  const finalsByManga = new Map();
+  for (const final of finalRows) {
+    if (!finalsByManga.has(final.mangaPath)) finalsByManga.set(final.mangaPath, []);
+    finalsByManga.get(final.mangaPath).push(final);
+  }
+
+  return mangaRows.map((manga) => ({
+    ...manga,
+    finalCount: finalsByManga.get(manga.path)?.length ?? 0,
+    finalPaths: (finalsByManga.get(manga.path) ?? []).map((final) => final.path),
+  }));
+}
+
+async function writeOutputs() {
+  const mangaRows = [...seenMangaUrls.values()].sort((a, b) => a.path.localeCompare(b.path));
+  const finalRows = [...seenFinalUrls.values()].sort((a, b) => a.path.localeCompare(b.path));
+  const groupedRows = rowsByManga(mangaRows, finalRows);
+
+  await mkdir(outDir, { recursive: true });
+  await writeFile(resolve(outDir, 'manga-paths.txt'), mangaRows.map((row) => row.path).join('\n') + '\n');
+  await writeFile(resolve(outDir, 'manga-urls.json'), JSON.stringify(mangaRows, null, 2) + '\n');
+  await writeFile(resolve(outDir, 'final-paths.txt'), finalRows.map((row) => row.path).join('\n') + '\n');
+  await writeFile(resolve(outDir, 'final-urls.json'), JSON.stringify(finalRows, null, 2) + '\n');
+  await writeFile(resolve(outDir, 'manga-with-final-paths.json'), JSON.stringify(groupedRows, null, 2) + '\n');
+
+  return { mangaRows, finalRows };
+}
+
 async function main() {
   console.log(`Base: ${baseUrl.href}`);
   console.log('Trying WordPress REST API...');
   await crawlRestApi();
-  console.log(`Found after REST: ${seenUrls.size}`);
+  console.log(`Manga pages after REST: ${seenMangaUrls.size}`);
+  console.log(`Final paths after REST: ${seenFinalUrls.size}`);
 
   console.log('Trying sitemaps...');
   await crawlSitemaps();
-  console.log(`Found after sitemaps: ${seenUrls.size}`);
+  console.log(`Manga pages after sitemaps: ${seenMangaUrls.size}`);
+  console.log(`Final paths after sitemaps: ${seenFinalUrls.size}`);
 
-  console.log('Crawling archive pages...');
+  console.log('Crawling manga archive pages...');
   await crawlArchive();
+  console.log(`Manga pages after archive: ${seenMangaUrls.size}`);
+  console.log(`Final paths after archive: ${seenFinalUrls.size}`);
 
-  const rows = [...seenUrls.values()].sort((a, b) => a.path.localeCompare(b.path));
-  await mkdir(outDir, { recursive: true });
-  await writeFile(resolve(outDir, 'manga-paths.txt'), rows.map((row) => row.path).join('\n') + '\n');
-  await writeFile(resolve(outDir, 'manga-urls.json'), JSON.stringify(rows, null, 2) + '\n');
+  console.log('Opening each manga page to collect final nested paths...');
+  await crawlMangaPagesForFinalPaths();
 
-  console.log(`Done. Found ${rows.length} manga paths.`);
+  const { mangaRows, finalRows } = await writeOutputs();
+
+  console.log(`Done. Found ${mangaRows.length} manga pages and ${finalRows.length} final paths.`);
   console.log(`Wrote ${resolve(outDir, 'manga-paths.txt')}`);
   console.log(`Wrote ${resolve(outDir, 'manga-urls.json')}`);
+  console.log(`Wrote ${resolve(outDir, 'final-paths.txt')}`);
+  console.log(`Wrote ${resolve(outDir, 'final-urls.json')}`);
+  console.log(`Wrote ${resolve(outDir, 'manga-with-final-paths.json')}`);
 
-  for (const row of rows.slice(0, 20)) console.log(row.path);
-  if (rows.length > 20) console.log(`...and ${rows.length - 20} more`);
+  for (const row of finalRows.slice(0, 20)) console.log(row.path);
+  if (finalRows.length > 20) console.log(`...and ${finalRows.length - 20} more final paths`);
+  if (finalRows.length === 0) console.log('No final paths found. Try increasing --max-pages or check whether the site loads chapters with JavaScript/AJAX.');
 }
 
 main().catch((error) => {
