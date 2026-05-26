@@ -193,7 +193,7 @@ async function fetchText(url, accept = 'text/html,application/xhtml+xml,applicat
     const response = await fetch(url, {
       headers: {
         accept,
-        'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) manga-final-path-fetcher/1.1',
+        'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) manga-final-path-fetcher/1.2',
       },
       redirect: 'follow',
     });
@@ -369,6 +369,7 @@ function rowsByManga(mangaRows, finalRows) {
     ...manga,
     finalCount: finalsByManga.get(manga.path)?.length ?? 0,
     finalPaths: (finalsByManga.get(manga.path) ?? []).map((final) => final.path),
+    finalUrls: (finalsByManga.get(manga.path) ?? []).map((final) => final.url),
   }));
 }
 
@@ -379,8 +380,10 @@ async function writeOutputs() {
 
   await mkdir(outDir, { recursive: true });
   await writeFile(resolve(outDir, 'manga-paths.txt'), mangaRows.map((row) => row.path).join('\n') + '\n');
+  await writeFile(resolve(outDir, 'manga-full-urls.txt'), mangaRows.map((row) => row.url).join('\n') + '\n');
   await writeFile(resolve(outDir, 'manga-urls.json'), JSON.stringify(mangaRows, null, 2) + '\n');
   await writeFile(resolve(outDir, 'final-paths.txt'), finalRows.map((row) => row.path).join('\n') + '\n');
+  await writeFile(resolve(outDir, 'final-full-urls.txt'), finalRows.map((row) => row.url).join('\n') + '\n');
   await writeFile(resolve(outDir, 'final-urls.json'), JSON.stringify(finalRows, null, 2) + '\n');
   await writeFile(resolve(outDir, 'manga-with-final-paths.json'), JSON.stringify(groupedRows, null, 2) + '\n');
 
@@ -411,13 +414,15 @@ async function main() {
 
   console.log(`Done. Found ${mangaRows.length} manga pages and ${finalRows.length} final paths.`);
   console.log(`Wrote ${resolve(outDir, 'manga-paths.txt')}`);
+  console.log(`Wrote ${resolve(outDir, 'manga-full-urls.txt')}`);
   console.log(`Wrote ${resolve(outDir, 'manga-urls.json')}`);
   console.log(`Wrote ${resolve(outDir, 'final-paths.txt')}`);
+  console.log(`Wrote ${resolve(outDir, 'final-full-urls.txt')}`);
   console.log(`Wrote ${resolve(outDir, 'final-urls.json')}`);
   console.log(`Wrote ${resolve(outDir, 'manga-with-final-paths.json')}`);
 
-  for (const row of finalRows.slice(0, 20)) console.log(row.path);
-  if (finalRows.length > 20) console.log(`...and ${finalRows.length - 20} more final paths`);
+  for (const row of finalRows.slice(0, 20)) console.log(row.url);
+  if (finalRows.length > 20) console.log(`...and ${finalRows.length - 20} more final URLs`);
   if (finalRows.length === 0) console.log('No final paths found. Try increasing --max-pages or check whether the site loads chapters with JavaScript/AJAX.');
 }
 
