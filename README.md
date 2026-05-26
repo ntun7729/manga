@@ -1,4 +1,4 @@
-# Manga final path fetcher
+# Manga final URL fetcher
 
 Node.js crawler for collecting final nested manga/chapter URLs from a WordPress/Madara-style `/manga/` index.
 
@@ -11,13 +11,13 @@ https://dev-eternal-galaxy-doujinshipaid.pantheonsite.io/manga/
 It collects both manga pages like:
 
 ```text
-/manga/25mayy/
+https://dev-eternal-galaxy-doujinshipaid.pantheonsite.io/manga/25mayy/
 ```
 
-and final nested paths like:
+and final nested URLs like:
 
 ```text
-/manga/25mayy/2kyounn/
+https://dev-eternal-galaxy-doujinshipaid.pantheonsite.io/manga/25mayy/2kyounn/
 ```
 
 ## Termux / proot usage
@@ -44,10 +44,12 @@ npm run crawl
 
 Results are written to:
 
-- `output/final-paths.txt` - final nested paths, for example `/manga/25mayy/2kyounn/`
+- `output/final-full-urls.txt` - full final HTTPS URLs, for example `https://dev-eternal-galaxy-doujinshipaid.pantheonsite.io/manga/25mayy/2kyounn/`
+- `output/final-paths.txt` - final nested paths only, for example `/manga/25mayy/2kyounn/`
 - `output/final-urls.json` - full final URLs plus metadata
-- `output/manga-with-final-paths.json` - manga pages grouped with their final paths
-- `output/manga-paths.txt` - parent manga paths, for example `/manga/25mayy/`
+- `output/manga-with-final-paths.json` - manga pages grouped with their final paths and full final URLs
+- `output/manga-full-urls.txt` - full parent manga HTTPS URLs
+- `output/manga-paths.txt` - parent manga paths only, for example `/manga/25mayy/`
 - `output/manga-urls.json` - parent manga URLs plus metadata
 
 ## Useful commands
