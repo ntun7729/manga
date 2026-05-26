@@ -1,11 +1,23 @@
-# Manga path fetcher
+# Manga final path fetcher
 
-Node.js crawler for collecting manga detail URLs from a WordPress/Madara-style `/manga/` index.
+Node.js crawler for collecting final nested manga/chapter URLs from a WordPress/Madara-style `/manga/` index.
 
 Default target:
 
 ```text
 https://dev-eternal-galaxy-doujinshipaid.pantheonsite.io/manga/
+```
+
+It collects both manga pages like:
+
+```text
+/manga/25mayy/
+```
+
+and final nested paths like:
+
+```text
+/manga/25mayy/2kyounn/
 ```
 
 ## Termux / proot usage
@@ -20,10 +32,23 @@ npm install
 npm run crawl
 ```
 
+If you already cloned the repo before:
+
+```sh
+cd manga
+git pull
+npm run crawl
+```
+
+## Output files
+
 Results are written to:
 
-- `output/manga-paths.txt` - one path per line, for example `/manga/25mayy/`
-- `output/manga-urls.json` - full URLs plus discovery metadata
+- `output/final-paths.txt` - final nested paths, for example `/manga/25mayy/2kyounn/`
+- `output/final-urls.json` - full final URLs plus metadata
+- `output/manga-with-final-paths.json` - manga pages grouped with their final paths
+- `output/manga-paths.txt` - parent manga paths, for example `/manga/25mayy/`
+- `output/manga-urls.json` - parent manga URLs plus metadata
 
 ## Useful commands
 
@@ -35,7 +60,7 @@ npm run crawl
 node src/fetch-manga-paths.js --base "https://example.com/manga/"
 
 # Crawl more archive pages
-node src/fetch-manga-paths.js --max-pages 80
+node src/fetch-manga-paths.js --max-pages 100
 
 # Be gentler on shared hosting
 node src/fetch-manga-paths.js --concurrency 2 --delay 750
@@ -43,10 +68,11 @@ node src/fetch-manga-paths.js --concurrency 2 --delay 750
 
 ## What it does
 
-The script tries three discovery methods:
+The script tries four discovery steps:
 
-1. WordPress REST search, including the common `wp-manga` custom post type.
+1. WordPress REST search, including common manga custom post types.
 2. WordPress sitemap XML files.
 3. HTML archive crawling from `/manga/`, `/manga/page/2/`, etc.
+4. Opening every discovered manga page and collecting nested links matching `/manga/<manga-slug>/<final-slug>/`.
 
-It only records URLs on the same host that look like manga detail pages under `/manga/<slug>/`.
+It only records URLs on the same host.
